@@ -3,7 +3,8 @@ import { Document, Page } from "react-pdf";
 import "../pdfWorker"; // sets pdfjs worker
 import { get, set, del } from "idb-keyval";
 
-import { useLibrary, type SortKey } from "../lib/useLibrary";
+import { useLibrary } from "../lib/useLibrary";
+import { type SortKey } from "../types/library";
 import { buildItemsFromHierarchicalFolder } from "../lib/importFromFolder";
 import type { LibraryItem } from "../types/library";
 
