@@ -1,16 +1,21 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { get, set, del } from "idb-keyval";
 import { useLibrary } from "../lib/useLibrary";
 import { ensureReadPermission } from "../lib/fsPermissions";
 import { buildItemsFromHierarchicalFolder } from "../lib/importFromFolder";
+import { groupAndSort } from "../lib/grouping";
 import type { LibraryItem } from "../types/library";
 import type { SortKey } from "../types/library";
 
 type FileEntry = { name: string; handle: FileSystemFileHandle };
 
 export default function Sidebar({
+    currentId,
+    onSelectItem,
     onOpenBlob,
 }: {
+    currentId: string | null;
+    onSelectItem: (item: LibraryItem) => void;
     onOpenBlob: (blob: Blob) => void;
 }) {
     const lib = useLibrary();
@@ -19,6 +24,16 @@ export default function Sidebar({
     const [dirHandle, setDirHandle] =
         useState<FileSystemDirectoryHandle | null>(null);
     const [files, setFiles] = useState<FileEntry[]>([]);
+
+    const activeRef = useRef<HTMLButtonElement | null>(null);
+
+    // Auto-scroll the active item into view when it changes (nice UX, optional)
+    useEffect(() => {
+        activeRef.current?.scrollIntoView({
+            block: "nearest",
+            behavior: "smooth",
+        });
+    }, [currentId]);
 
     // Restore previously authorized raw folder (optional)
     useEffect(() => {
@@ -87,104 +102,10 @@ export default function Sidebar({
     const rawList = useMemo(() => files, [files]);
 
     // group Band -> Album -> Songs based on the already-filtered/sorted lib.list
-    const grouped = useMemo(() => {
-        // Build Band -> Album -> Items map, also track latestModified per group
-        const byBand = new Map<
-            string,
-            {
-                albums: Map<
-                    string,
-                    { items: LibraryItem[]; latestModified: number }
-                >;
-                latestModified: number;
-            }
-        >();
-
-        for (const it of lib.list) {
-            const band = it.band || "Unknown";
-            const album = it.album ?? "Single";
-            const bandEntry = byBand.get(band) ?? {
-                albums: new Map<
-                    string,
-                    { items: LibraryItem[]; latestModified: number }
-                >(),
-                latestModified: 0,
-            };
-
-            const albumEntry = bandEntry.albums.get(album) ?? {
-                items: [] as LibraryItem[],
-                latestModified: 0,
-            };
-
-            albumEntry.items.push(it);
-            albumEntry.latestModified = Math.max(
-                albumEntry.latestModified,
-                it.lastModified
-            );
-
-            bandEntry.albums.set(album, albumEntry);
-            bandEntry.latestModified = Math.max(
-                bandEntry.latestModified,
-                albumEntry.latestModified
-            );
-
-            byBand.set(band, bandEntry);
-        }
-
-        const dir = lib.asc ? 1 : -1;
-        const cmpStr = (a: string, b: string) =>
-            dir * a.localeCompare(b, undefined, { numeric: true });
-        const cmpNum = (a: number, b: number) => dir * (a - b);
-
-        // Sort bands
-        const bandNames = Array.from(byBand.keys()).sort((a, b) => {
-            if (lib.sortKey === "band") return cmpStr(a, b);
-            if (lib.sortKey === "lastModified")
-                return cmpNum(
-                    byBand.get(a)!.latestModified,
-                    byBand.get(b)!.latestModified
-                );
-            // default stable-ish alpha
-            return a.localeCompare(b, undefined, { numeric: true });
-        });
-
-        return bandNames.map((band) => {
-            const bandEntry = byBand.get(band)!;
-
-            // Sort albums within band
-            const albumNames = Array.from(bandEntry.albums.keys()).sort(
-                (a, b) => {
-                    if (lib.sortKey === "album") return cmpStr(a, b);
-                    if (lib.sortKey === "lastModified")
-                        return cmpNum(
-                            bandEntry.albums.get(a)!.latestModified,
-                            bandEntry.albums.get(b)!.latestModified
-                        );
-                    return a.localeCompare(b, undefined, { numeric: true });
-                }
-            );
-
-            const albums = albumNames.map((album) => {
-                const albumEntry = bandEntry.albums.get(album)!;
-
-                // Sort songs within album
-                const items = albumEntry.items.slice().sort((ia, ib) => {
-                    if (lib.sortKey === "song") return cmpStr(ia.song, ib.song);
-                    if (lib.sortKey === "lastModified")
-                        return cmpNum(ia.lastModified, ib.lastModified);
-                    // default alpha by song
-                    return ia.song.localeCompare(ib.song, undefined, {
-                        numeric: true,
-                    });
-                });
-
-                return { album, items };
-            });
-
-            return { band, albums };
-        });
-    }, [lib.list, lib.sortKey, lib.asc]);
-
+    const grouped = useMemo(
+        () => groupAndSort(lib.list, lib.sortKey, lib.asc),
+        [lib.list, lib.sortKey, lib.asc]
+    );
 
     return (
         <aside className="w-96 shrink-0 h-full overflow-y-auto border-r p-3 space-y-3">
@@ -222,16 +143,11 @@ export default function Sidebar({
                     }
                     title="Filter by band"
                 >
-                    <option value="">
-                        All bands
-                    </option>
+                    <option value="">All bands</option>
                     {Array.from(new Set(lib.items.map((i) => i.band)))
                         .sort()
                         .map((b) => (
-                            <option
-                                key={b}
-                                value={b}
-                            >
+                            <option key={b} value={b}>
                                 {b}
                             </option>
                         ))}
@@ -249,9 +165,7 @@ export default function Sidebar({
                     title="Filter by album"
                     disabled={!lib.filters.band}
                 >
-                    <option value="">
-                        All albums
-                    </option>
+                    <option value="">All albums</option>
                     {Array.from(
                         new Set(
                             lib.items
@@ -266,10 +180,7 @@ export default function Sidebar({
                     )
                         .sort()
                         .map((a) => (
-                            <option
-                                key={a}
-                                value={a}
-                            >
+                            <option key={a} value={a}>
                                 {a}
                             </option>
                         ))}
@@ -319,53 +230,59 @@ export default function Sidebar({
                                         </div>
 
                                         <ul className="mt-1">
-                                            {items.map((item) => (
-                                                <li
-                                                    key={item.id}
-                                                    className="flex items-center justify-between mb-1"
-                                                >
-                                                    {/* Open the song */}
-                                                    <button
-                                                        className="flex-1 text-left hover:bg-gray-100 rounded px-2 py-1"
-                                                        onClick={async () => {
-                                                            try {
-                                                                const blob =
-                                                                    await item.handle.getFile();
-                                                                onOpenBlob(
-                                                                    blob
-                                                                );
-                                                            } catch {
-                                                                alert(
-                                                                    "Can't open this file. It may have been moved. Re-import to relink."
-                                                                );
+                                            {items.map((item) => {
+                                                const isActive = item.id === currentId;
+                                                return (
+                                                    <li
+                                                        key={item.id}
+                                                        className="flex items-center justify-between mb-1"
+                                                    >
+                                                        {/* Open the song */}
+                                                        <button
+                                                            ref={(el) => {
+                                                                if (isActive)
+                                                                    activeRef.current =
+                                                                        el;
+                                                            }}
+                                                            className={`flex-1 text-left hover:bg-gray-100 rounded px-2 py-1 ${
+                                                                isActive
+                                                                    ? "bg-indigo-100 text-blue-300 font-semibold ring-1 ring-blue-300"
+                                                                    : "hover:bg-gray-100"
+                                                            }`}
+                                                            onClick={() =>
+                                                                onSelectItem(
+                                                                    item
+                                                                )
                                                             }
-                                                        }}
-                                                        title={item.song}
-                                                    >
-                                                        {item.song}
-                                                    </button>
+                                                            title={item.song}
+                                                        >
+                                                            {item.song}
+                                                        </button>
 
-                                                    {/* Delete from library (not from disk) */}
-                                                    <button
-                                                        className="ml-2 text-xs text-red-600 hover:underline px-1 py-1"
-                                                        onClick={async (e) => {
-                                                            e.stopPropagation(); // don’t trigger open
-                                                            const ok =
-                                                                window.confirm(
-                                                                    `Remove "${item.song}" from your library? (The file on disk is not deleted.)`
+                                                        {/* Delete from library (not from disk) */}
+                                                        <button
+                                                            className="ml-2 text-xs text-red-600 hover:underline px-1 py-1"
+                                                            onClick={async (
+                                                                e
+                                                            ) => {
+                                                                e.stopPropagation(); // don’t trigger open
+                                                                const ok =
+                                                                    window.confirm(
+                                                                        `Remove "${item.song}" from your library? (The file on disk is not deleted.)`
+                                                                    );
+                                                                if (!ok) return;
+                                                                await lib.removeItem(
+                                                                    item.id
                                                                 );
-                                                            if (!ok) return;
-                                                            await lib.removeItem(
-                                                                item.id
-                                                            );
-                                                        }}
-                                                        aria-label={`Delete ${item.song} from library`}
-                                                        title="Delete from library"
-                                                    >
-                                                        X
-                                                    </button>
-                                                </li>
-                                            ))}
+                                                            }}
+                                                            aria-label={`Delete ${item.song} from library`}
+                                                            title="Delete from library"
+                                                        >
+                                                            X
+                                                        </button>
+                                                    </li>
+                                                );
+                                            })}
                                         </ul>
                                     </div>
                                 ))}
