@@ -1,7 +1,11 @@
+// pdf.js default styles
+import "pdfjs-dist/web/pdf_viewer.css";
+import PdfFolderViewer from "./components/PdfFolderViewer";
+
 export default function App() {
     return (
-        <div className="min-h-screen grid place-items-center bg-slate-900 text-white">
-            <h1 className="text-4xl font-bold">Music Tab Viewer 🎶</h1>
+        <div className="h-screen w-screen bg-gray-50 dark:bg-gray-900">
+            <PdfFolderViewer />
         </div>
     );
 }
